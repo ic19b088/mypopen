@@ -12,138 +12,119 @@
  *
  */
 
-// -------------------------------------------------------------- includes --
 #include "mypopen.h"
 
-// -------------------------------------------------------------- defines --
-
-//Leseende
-#define R_END 0
-
-//Schreibende
-#define W_END 1
-
-//Setzt globale Variablen zurück
-#define RESET_GLOBALS() do { \
-pid = -1;\
-fs = NULL;\
-} while (0)
-
-// -------------------------------------------------------------- globals --
-
 /**
- * \brief mypopen() speichert über diese Variable die Process-ID des Kind-Prozesses
- *        für die spätere verarbeitung durch mypclose().
- *        Wird im Fehlerfall zurückgesetzt.
- *        Default: -1 weil 0 auf manchen Systemen eine gültige pid wäre
+ * @param pid Globale Variable für die Prozess-id
+ * @param *file Globaler File-Pointer
  */
 static pid_t pid = -1;
+static FILE *file = NULL;
 
 /**
- * \brief mypopen() speichert mit dieser Variable den File-Pointer
- *        für die spätere Verarbeitung durch mypclose().
- *        Wird im Fehlerfall zurückgesetzt.
+ * @param pipe_read kennzeichnet das Leseende
  */
-static FILE *fs = NULL;
+#define pipe_read 0
 
-// ------------------------------------------------------------ functions --
+/**
+ * @param pipe_write kennzeichnet das Schreibende
+ */
+#define pipe_write 1
+
+/**
+ * @brief Setzt static variablen zurück. Marko wurde Programmiererfreundlich in eine do {} while Schleife gekapselt.
+ */
+#define reset() do { \
+pid = -1;\
+file = NULL;\
+} while (0)
 
 FILE *mypopen(const char *command, const char *type) {
-    int fd[2];
-    /* ### FB: Beschreibung, was die Variablen ausdrücken fehlt oder aussagekräftigere Namen verwenden */
-    int c_pipe_fd, p_pipe_fd, c_std_fd;
-    char *p_open_mode;
 
-    // überprüfen ob mypopen (ohne mypclose) bereits ausgeführt wurde
+/**
+ * @param fd
+ * @param open_end
+ * @param pipe_end
+ * @param sys_io
+ * @param mode
+ */
+    int fd[2];
+    int open_end;
+    int pipe_end;
+    int sys_io;
+    char *mode;
+
+/**
+ * @brief Überprüft ob mypopen bzw. mypclose bereits ausgeführt wurde.
+ */
     if (pid >= 0) {
         errno = EAGAIN;
         return NULL;
     }
-
-    // Überprüfung ob mehr als 'r' oder 'w' eingegeben wurde
+/**
+ * @brief überprüft ob mehr als 1 Buchstabe eingegeben wurde.
+ */
     if (type[1] != '\0') {
         errno = EINVAL;
         return NULL;
     }
-
-    /* ### FB: Übersichtliches Switch, vielleicht im Kommentar genauer beschreiben, was genau hier gemacht wird*/
-    // Lese- oder Schreibe-Einstellungen wählen
-/*
- * ### FB_TMG: Gute Idee, um nicht sinnlos Code zu duplizieren
+/**
+ * @brief Hier wird die Benutzereingabe überprüft und je nach Wert die entsprechenden Werte gesetzt.
  */
-    switch (type[0]) {
-        case 'r':
-            p_pipe_fd = R_END;
-            p_open_mode = "r";
-            c_pipe_fd = W_END;
-            c_std_fd = STDOUT_FILENO;
-            break;
-        case 'w':
-            p_pipe_fd = W_END;
-            p_open_mode = "w";
-            c_pipe_fd = R_END;
-            c_std_fd = STDIN_FILENO;
-            break;
-        default:
-            errno = EINVAL;
-            return NULL;
-    }
-    /* ### FB: Kommentar?*/
-    if (pipe(fd) == -1) {
+    if (type[0] == 'r') {
+        pipe_end = pipe_read;
+        mode = "r";
+        open_end = pipe_write;
+        sys_io = STDOUT_FILENO;
+    } else if (type[0] == 'w') {
+        pipe_end = pipe_write;
+        mode = "w";
+        open_end = pipe_read;
+        sys_io = STDIN_FILENO;
+    } else {
+        errno = EINVAL;
         return NULL;
     }
 
-    switch (pid = fork()) {
-        case -1: // ERROR -> konnte kein Kind erzeugt werden
-            /* ### FB: Erklärung warum Typecast für folgende (void)'s */
-            (void)close(fd[W_END]);
-            (void)close(fd[R_END]);
-/*
- * ### FB_TMG: Hier sollten Sie nicht explizit errno setzen (das macht
- * ja fork schon) [-1]
+/**
+ * @brief Überprüfung ob Einrichten einer Pipe fehlgeschlagen ist.
  */
-            errno = EAGAIN;
-            return NULL;
-
-        case 0:                              // Kind-Prozess Routine
-            (void)close(fd[p_pipe_fd]);      // eltern-ende schließen
-            /* ### FB: Check ob STD-Input nicht schon Kindprozess ist - super*/
-/*
- * ### FB_TMG: Check ob stdin/stdout nicht eh schon die Pipe ist
- */
-            if (fd[c_pipe_fd] != c_std_fd) { // kein dup/close wenn schon gesetzt
-                if (dup2(fd[c_pipe_fd], c_std_fd) == -1) {
-                    (void)close(fd[c_pipe_fd]);
-/*
- * ### FB_TMG: Sehr schön - Die Verwendung von _exit() verhindert, daß
- * atexit() Handlers aufgerufen werden
- * Noch besser wäre allerdings _Exit(), weil das ISO-C und somit portabel ist
- */
-                    _exit(EXIT_FAILURE);
-                }
-                (void)close(fd[c_pipe_fd]);
-            }
-            (void)execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-            /* ### FB: gut, dass _exit() verwendet wurde */
-/*
- * ### FB_TMG: Sehr schön - Die Verwendung von _exit() verhindert, daß
- * atexit() Handlers aufgerufen werden
- * Noch besser wäre allerdings _Exit(), weil das ISO-C und somit portabel ist
- */
-            _exit(EXIT_FAILURE); // nur erreich wenn execl fehlschlägt
-
-        default:
-            // Eltern-Prozess Routine
-            (void)close(fd[c_pipe_fd]); // kind-ende schließen
-            if ((fs = fdopen(fd[p_pipe_fd], p_open_mode)) == NULL) {
-                pid = -1;
-                (void)close(fd[p_pipe_fd]);
-                return NULL;
-            }
-            break;
+    if (pipe(fd) == -1) {
+        return NULL;
     }
-    return fs;
+/**
+ * @brief Wenn die pid -1 ist konnte kein Kindprozess erzeugt werden. --> Alles zu und raus.
+ * @brief Wenn die pid 0 ist wird das Eltern-Ende geschlossen, der Filedeskriptor kopiert und das Prozessimage überschrieben.
+ * @brief Wenn die pid die Prozess-Id des Kind-Prozesses ist, wird das Kind-Ende geschlossen.
+ */
+    pid = fork();
+    if (pid == -1) {
+        close(fd[pipe_write]);
+        close(fd[pipe_read]);
+        return NULL;
+    } else if (pid == 0) {
+        close(fd[pipe_end]);
+        if (fd[open_end] != sys_io) {
+            if (dup2(fd[open_end], sys_io) == -1) {
+                close(fd[open_end]);
+                _Exit(EXIT_FAILURE);
+            }
+            close(fd[open_end]);
+        }
+        execl("/bin/sh", "sh", "-c", command, (char *) NULL);
+        _Exit(EXIT_FAILURE);
+    } else {
+        close(fd[open_end]);
+        if ((file = fdopen(fd[pipe_end], mode)) == NULL) {
+            pid = -1;
+            (void) close(fd[pipe_end]);
+            return NULL;
+        }
+    }
+
+    return file;
 }
+
 /* ### FB:Zu my pclose- nichts hinzuzufügen, super gemacht! :)*/
 int mypclose(FILE *stream) {
     //überprüfen ob mypopen schon aufgerufen wurde
@@ -153,7 +134,7 @@ int mypclose(FILE *stream) {
     }
 
     //überprüfen ob der richtige file-pointer übergeben wurde
-    if (fs != stream) {
+    if (file != stream) {
         errno = EINVAL;
         return -1;
     }
@@ -161,7 +142,7 @@ int mypclose(FILE *stream) {
     // stream schließen
     if (fclose(stream) == EOF) {
         // zurücksetzen da fclose() nicht nochmal aufgerufen werden darf
-        RESET_GLOBALS();
+        reset();
         return -1;
     }
 
@@ -174,13 +155,13 @@ int mypclose(FILE *stream) {
                 continue;
 
             errno = ECHILD;
-            RESET_GLOBALS();
+            reset();
             return -1;
         }
     }
 
     // globals zurücksetzen
-    RESET_GLOBALS();
+    reset();
 
     // exit-status überprüfen
     if (WIFEXITED(status))
