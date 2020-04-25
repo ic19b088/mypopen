@@ -1,5 +1,5 @@
+///@file mypopen.c
 /**
- * @file mypopen.c
  *
  * Dies ist eine Kopie der Library-Funktionen popen und pclose.
  *
@@ -117,7 +117,7 @@ FILE *mypopen(const char *command, const char *type) {
         close(fd[open_end]);
         if ((file = fdopen(fd[pipe_end], mode)) == NULL) {
             pid = -1;
-            (void) close(fd[pipe_end]);
+            close(fd[pipe_end]);
             return NULL;
         }
     }
@@ -125,48 +125,55 @@ FILE *mypopen(const char *command, const char *type) {
     return file;
 }
 
-/* ### FB:Zu my pclose- nichts hinzuzufügen, super gemacht! :)*/
 int mypclose(FILE *stream) {
-    //überprüfen ob mypopen schon aufgerufen wurde
+/**
+ * @brief Check ob mypopen bereits aufgerufen wurde.
+ */
     if (pid < 0) {
         errno = ECHILD;
         return -1;
     }
 
-    //überprüfen ob der richtige file-pointer übergeben wurde
+/**
+ * @brief Überprüft den Filepointer
+ */
     if (file != stream) {
         errno = EINVAL;
         return -1;
     }
 
-    // stream schließen
+/**
+ * @brief wird der Stream geschlossen. Gleichzeitig werden die static Variablen zurückgesetzt, da ein zweiter fclose()-Aufruf
+ * @brief ist.
+ */
     if (fclose(stream) == EOF) {
-        // zurücksetzen da fclose() nicht nochmal aufgerufen werden darf
         reset();
         return -1;
     }
 
-    // auf kindprozess warten
+/**
+ * @brief wird auf den Kindprozess gewartet.
+ */
     int status;
     pid_t wpid;
     while ((wpid = waitpid(pid, &status, 0)) != pid) {
         if (wpid == -1) {
-            if (errno == EINTR) // only interrupted, wait again
+            if (errno == EINTR) {
                 continue;
-
+            }
             errno = ECHILD;
             reset();
             return -1;
         }
     }
 
-    // globals zurücksetzen
+/**
+ *@brief Zurücksetzen der Variablen und Exit-Status überprüfen
+ */
     reset();
-
-    // exit-status überprüfen
-    if (WIFEXITED(status))
+    if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
-    else {
+    } else {
         errno = ECHILD;
         return -1;
     }
